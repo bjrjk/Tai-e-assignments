@@ -78,9 +78,11 @@ public abstract class Solver<Node, Fact> {
 
     protected void initializeForward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
         Node entryNode = cfg.getEntry();
-        result.setOutFact(entryNode, analysis.newBoundaryFact(cfg));
+        result.setInFact(entryNode, analysis.newBoundaryFact(cfg));
+        result.setOutFact(entryNode, analysis.newInitialFact());
         for (Node node: cfg) {
             if (cfg.isEntry(node)) continue;
+            result.setInFact(node, analysis.newInitialFact());
             result.setOutFact(node, analysis.newInitialFact());
         }
     }

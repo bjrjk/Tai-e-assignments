@@ -183,58 +183,68 @@ public class ConstantPropagation extends
                     op2Val = evaluate(binaryExp.getOperand2(), in);
             BinaryExp.Op op = binaryExp.getOperator();
 
-            if (op1Val.isNAC() || op2Val.isNAC())
-                return Value.getNAC();
-            else if (!(op1Val.isConstant() && op2Val.isConstant()))
+            /*
+            Special corner case for division-by-0.
+            Even if the dividend is NAC, result is UNDEF.
+             */
+            if (op2Val.isConstant() && op2Val.getConstant() == 0 &&
+                    op instanceof ArithmeticExp.Op arithOp &&
+                    (arithOp == ArithmeticExp.Op.DIV || arithOp == ArithmeticExp.Op.REM))
                 return Value.getUndef();
 
-            int resultRaw,
-                    op1Raw = op1Val.getConstant(),
-                    op2Raw = op2Val.getConstant();
+            if (op1Val.isNAC() || op2Val.isNAC())
+                return Value.getNAC();
+            else if (op1Val.isConstant() && op2Val.isConstant()) {
+                int resultRaw,
+                        op1Raw = op1Val.getConstant(),
+                        op2Raw = op2Val.getConstant();
 
-            if (op instanceof ArithmeticExp.Op arithOp) {
-                try {
-                    resultRaw = switch (arithOp) {
-                        case ADD -> op1Raw + op2Raw;
-                        case SUB -> op1Raw - op2Raw;
-                        case MUL -> op1Raw * op2Raw;
-                        case DIV -> op1Raw / op2Raw;
-                        case REM -> op1Raw % op2Raw;
+                if (op instanceof ArithmeticExp.Op arithOp) {
+                    try {
+                        resultRaw = switch (arithOp) {
+                            case ADD -> op1Raw + op2Raw;
+                            case SUB -> op1Raw - op2Raw;
+                            case MUL -> op1Raw * op2Raw;
+                            case DIV -> op1Raw / op2Raw;
+                            case REM -> op1Raw % op2Raw;
+                        };
+                    }
+                    catch (ArithmeticException e) { // Divisor is 0.
+                        return Value.getUndef();
+                    }
+                }
+                else if (op instanceof ConditionExp.Op condExp) {
+                    boolean resultBoolRaw = switch (condExp) {
+                        case EQ -> op1Raw == op2Raw;
+                        case NE -> op1Raw != op2Raw;
+                        case LT -> op1Raw < op2Raw;
+                        case GT -> op1Raw > op2Raw;
+                        case LE -> op1Raw <= op2Raw;
+                        case GE -> op1Raw >= op2Raw;
+                    };
+                    resultRaw = resultBoolRaw ? 1 : 0;
+                }
+                else if (op instanceof ShiftExp.Op shiftExp) {
+                    resultRaw = switch (shiftExp) {
+                        case SHL -> op1Raw << op2Raw;
+                        case SHR -> op1Raw >> op2Raw;
+                        case USHR -> op1Raw >>> op2Raw;
                     };
                 }
-                catch (ArithmeticException e) { // Divisor is 0.
-                    return Value.getUndef();
+                else if (op instanceof BitwiseExp.Op bitExp) {
+                    resultRaw = switch (bitExp) {
+                        case OR -> op1Raw | op2Raw;
+                        case AND -> op1Raw & op2Raw;
+                        case XOR -> op1Raw ^ op2Raw;
+                    };
                 }
-            }
-            else if (op instanceof ConditionExp.Op condExp) {
-                boolean resultBoolRaw = switch (condExp) {
-                    case EQ -> op1Raw == op2Raw;
-                    case NE -> op1Raw != op2Raw;
-                    case LT -> op1Raw < op2Raw;
-                    case GT -> op1Raw > op2Raw;
-                    case LE -> op1Raw <= op2Raw;
-                    case GE -> op1Raw >= op2Raw;
-                };
-                resultRaw = resultBoolRaw ? 1 : 0;
-            }
-            else if (op instanceof ShiftExp.Op shiftExp) {
-                resultRaw = switch (shiftExp) {
-                    case SHL -> op1Raw << op2Raw;
-                    case SHR -> op1Raw >> op2Raw;
-                    case USHR -> op1Raw >>> op2Raw;
-                };
-            }
-            else if (op instanceof BitwiseExp.Op bitExp) {
-                resultRaw = switch (bitExp) {
-                    case OR -> op1Raw | op2Raw;
-                    case AND -> op1Raw & op2Raw;
-                    case XOR -> op1Raw ^ op2Raw;
-                };
+                else
+                    return Value.getNAC();
+
+                return Value.makeConstant(resultRaw);
             }
             else
                 return Value.getUndef();
-
-            return Value.makeConstant(resultRaw);
         }
         // Return NAC according to requirements.
         else

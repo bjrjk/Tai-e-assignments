@@ -1,11 +1,6 @@
 class Test {
     void test() {
-        s si = new s();
-        int x = si.x;
-        si.x = 2;
+        int x = 1 / 0;
+        int y = x + 1;
     }
-}
-
-class s {
-    public int x = 1;
 }

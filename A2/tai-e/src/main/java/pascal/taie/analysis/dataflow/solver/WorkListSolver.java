@@ -47,14 +47,14 @@ class WorkListSolver<Node, Fact> extends Solver<Node, Fact> {
             Node node = workList.poll();
 
             // Inelegant type cast codes
-            Fact in = (Fact) new CPFact();
+            Fact in = result.getInFact(node);
             for (Node pred: cfg.getPredsOf(node)) {
                 analysis.meetInto(
                         result.getOutFact(pred),
                         in
                 );
             }
-            result.setInFact(node, in);
+            //result.setInFact(node, in);
 
             if (analysis.transferNode(node, result.getInFact(node), result.getOutFact(node))) {
                 for (Node succ: cfg.getSuccsOf(node)) {
