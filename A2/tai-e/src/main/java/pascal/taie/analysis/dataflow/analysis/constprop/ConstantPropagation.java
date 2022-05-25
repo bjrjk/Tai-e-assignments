@@ -114,7 +114,7 @@ public class ConstantPropagation extends
         }
         // Unreachable code path
         else
-            throw new AssertionError("The code shouldn't be reached.");
+            return Value.getNAC();
     }
 
     @Override
@@ -126,17 +126,7 @@ public class ConstantPropagation extends
 
             if (canHoldInt(lVar)) {
                 RValue rValue = defStmt.getRValue();
-                Value lAbstractValue;
-
-                if (rValue instanceof IntLiteral rIntLiteral)
-                    lAbstractValue = evaluate(rIntLiteral, in);
-                else if (rValue instanceof Var rVar)
-                    lAbstractValue = evaluate(rVar, in);
-                else if (rValue instanceof BinaryExp rBinExp)
-                    lAbstractValue = evaluate(rBinExp, in);
-                else
-                    lAbstractValue = Value.getNAC();
-
+                Value lAbstractValue = evaluate(rValue, in);
                 newOut.update(lVar, lAbstractValue);
             }
             else
@@ -189,8 +179,8 @@ public class ConstantPropagation extends
             return Value.makeConstant(intLiteral.getValue());
         }
         else if (exp instanceof BinaryExp binaryExp) {
-            Value op1Val = in.get(binaryExp.getOperand1()),
-                    op2Val = in.get(binaryExp.getOperand2());
+            Value op1Val = evaluate(binaryExp.getOperand1(), in),
+                    op2Val = evaluate(binaryExp.getOperand2(), in);
             BinaryExp.Op op = binaryExp.getOperator();
 
             if (op1Val.isNAC() || op2Val.isNAC())
@@ -201,8 +191,9 @@ public class ConstantPropagation extends
             int resultRaw,
                     op1Raw = op1Val.getConstant(),
                     op2Raw = op2Val.getConstant();
-            try {
-                if (op instanceof ArithmeticExp.Op arithOp) {
+
+            if (op instanceof ArithmeticExp.Op arithOp) {
+                try {
                     resultRaw = switch (arithOp) {
                         case ADD -> op1Raw + op2Raw;
                         case SUB -> op1Raw - op2Raw;
@@ -211,41 +202,42 @@ public class ConstantPropagation extends
                         case REM -> op1Raw % op2Raw;
                     };
                 }
-                else if (op instanceof ConditionExp.Op condExp) {
-                    boolean resultBoolRaw = switch (condExp) {
-                        case EQ -> op1Raw == op2Raw;
-                        case NE -> op1Raw != op2Raw;
-                        case LT -> op1Raw < op2Raw;
-                        case GT -> op1Raw > op2Raw;
-                        case LE -> op1Raw <= op2Raw;
-                        case GE -> op1Raw >= op2Raw;
-                    };
-                    resultRaw = resultBoolRaw ? 1 : 0;
+                catch (ArithmeticException e) { // Divisor is 0.
+                    return Value.getUndef();
                 }
-                else if (op instanceof ShiftExp.Op shiftExp) {
-                    resultRaw = switch (shiftExp) {
-                        case SHL -> op1Raw << op2Raw;
-                        case SHR -> op1Raw >> op2Raw;
-                        case USHR -> op1Raw >>> op2Raw;
-                    };
-                }
-                else if (op instanceof BitwiseExp.Op bitExp) {
-                    resultRaw = switch (bitExp) {
-                        case OR -> op1Raw | op2Raw;
-                        case AND -> op1Raw & op2Raw;
-                        case XOR -> op1Raw ^ op2Raw;
-                    };
-                }
-                else
-                    throw new AssertionError("The code shouldn't be reached.");
             }
-            catch (ArithmeticException e) { // Divisor is 0.
+            else if (op instanceof ConditionExp.Op condExp) {
+                boolean resultBoolRaw = switch (condExp) {
+                    case EQ -> op1Raw == op2Raw;
+                    case NE -> op1Raw != op2Raw;
+                    case LT -> op1Raw < op2Raw;
+                    case GT -> op1Raw > op2Raw;
+                    case LE -> op1Raw <= op2Raw;
+                    case GE -> op1Raw >= op2Raw;
+                };
+                resultRaw = resultBoolRaw ? 1 : 0;
+            }
+            else if (op instanceof ShiftExp.Op shiftExp) {
+                resultRaw = switch (shiftExp) {
+                    case SHL -> op1Raw << op2Raw;
+                    case SHR -> op1Raw >> op2Raw;
+                    case USHR -> op1Raw >>> op2Raw;
+                };
+            }
+            else if (op instanceof BitwiseExp.Op bitExp) {
+                resultRaw = switch (bitExp) {
+                    case OR -> op1Raw | op2Raw;
+                    case AND -> op1Raw & op2Raw;
+                    case XOR -> op1Raw ^ op2Raw;
+                };
+            }
+            else
                 return Value.getUndef();
-            }
 
             return Value.makeConstant(resultRaw);
         }
+        // Return NAC according to requirements.
         else
-            throw new AssertionError("The code shouldn't be reached.");
+            return Value.getNAC();
     }
 }
