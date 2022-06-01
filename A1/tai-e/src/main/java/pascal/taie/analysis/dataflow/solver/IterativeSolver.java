@@ -47,15 +47,14 @@ class IterativeSolver<Node, Fact> extends Solver<Node, Fact> {
             for (Node node: cfg) {
                 if (cfg.isExit(node)) continue;
 
-                // Inelegant type cast codes
-                Fact out = (Fact) new SetFact<Var>();
+                // The operation is monotonous with `out` set here, so we don't need to clear the set.
+                Fact out = result.getOutFact(node);
                 for (Node succ: cfg.getSuccsOf(node)) {
                     analysis.meetInto(
                             result.getInFact(succ),
                             out
                     );
                 }
-                result.setOutFact(node, out);
 
                 changed |= analysis.transferNode(
                         node,
