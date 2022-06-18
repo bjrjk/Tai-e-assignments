@@ -56,7 +56,9 @@ public class ConstantPropagation extends
         IR methodBody = cfg.getIR();
         List<Var> paramList = methodBody.getParams();
         for (Var param: paramList) {
-            boundFact.update(param, Value.getNAC());
+            // We only focus on the analysis of int constant propagation.
+            if (canHoldInt(param))
+                boundFact.update(param, Value.getNAC());
         }
         /* Output doesn't contain `this`.
         // Initialize the fact of `this` variable in method to NAC as we don't implement inter-procedural analysis.
@@ -95,7 +97,7 @@ public class ConstantPropagation extends
         // NAC meet v = NAC
         if (v1.isNAC() || v2.isNAC())
             return Value.getNAC();
-            // UNDEF meet v = v
+        // UNDEF meet v = v
         else if (v1.isUndef() || v2.isUndef()) {
             // Mention that the `Value` type is immutable, so we can return them directly.
             if (v1.isUndef())
@@ -108,7 +110,7 @@ public class ConstantPropagation extends
             // c meet c = c
             if (v1.equals(v2))
                 return v1;
-                // c1 meet c2 = NAC
+            // c1 meet c2 = NAC
             else
                 return Value.getNAC();
         }

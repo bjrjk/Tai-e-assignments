@@ -56,7 +56,9 @@ public class ConstantPropagation extends
         IR methodBody = cfg.getIR();
         List<Var> paramList = methodBody.getParams();
         for (Var param: paramList) {
-            boundFact.update(param, Value.getNAC());
+            // We only focus on the analysis of int constant propagation.
+            if (canHoldInt(param))
+                boundFact.update(param, Value.getNAC());
         }
         /* Output doesn't contain `this`.
         // Initialize the fact of `this` variable in method to NAC as we don't implement inter-procedural analysis.
