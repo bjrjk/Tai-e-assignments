@@ -95,7 +95,7 @@ public class ConstantPropagation extends
             FieldRef staticFieldRef = storeFieldAccess.getFieldRef();
             staticFieldStore2LoadMap.computeIfAbsent(staticFieldRef, (key) -> new HashSet<>());
             for (LoadField loadField: loadFieldSet) {
-                if (storeFieldAccess.getFieldRef() == loadField.getFieldRef()) {
+                if (Objects.equals(storeFieldAccess.getFieldRef(), loadField.getFieldRef())) {
                     staticFieldStore2LoadMap.get(staticFieldRef).add(loadField);
                 }
             }
@@ -196,6 +196,7 @@ public class ConstantPropagation extends
                 RValue rValue = defStmt.getRValue();
                 Value lAbstractValue = Value.getUndef();
                 if (defStmt instanceof LoadArray LAStmt) {
+                    // Process `y = x[i];`
                     ArrayAccess RAAccess = LAStmt.getRValue();
                     Value arrayIndexVal = evaluate(RAAccess.getIndex(), in);
                     if (!arrayIndexVal.isUndef()) {
@@ -203,10 +204,8 @@ public class ConstantPropagation extends
                         Set<SimpleImmutableEntry<Obj, Value>> propagationQueue = loadArrayPropagationQueueMap.get(LAStmt);
                         for (SimpleImmutableEntry<Obj, Value> ObjValPair: propagationQueue) {
                             Value arrayIndexVal2 = ObjValPair.getValue();
-                            if (isArrayAlias(arrayIndexVal, arrayIndexVal2)) {
-                                //propagateArrayAlias(ObjValPair.getKey(), RAAccess);
+                            if (isArrayAlias(arrayIndexVal, arrayIndexVal2))
                                 lAbstractValue = meetValue(lAbstractValue, getObjRAAccessValue(ObjValPair.getKey(), arrayIndexVal));
-                            }
                         }
                     }
                 }
@@ -237,6 +236,7 @@ public class ConstantPropagation extends
                         // If the object field value changed, update it
                         if (!Objects.equals(objFieldConstValue.put(LFAPair, nLVal), nLVal)) {
                             // Propagate them to corresponding LoadFields
+                            rPointsToSet.computeIfAbsent(storeObj, (key) -> new HashSet<Var>());
                             for (Var objAssocVar: rPointsToSet.get(storeObj)) {
                                 for (LoadField loadField: objAssocVar.getLoadFields()) {
                                     // If field equals
@@ -245,7 +245,7 @@ public class ConstantPropagation extends
                                         fieldAccessConstValue.computeIfAbsent(RFAccess, (key) -> Value.getUndef());
                                         // Update the RHS Value of `z = x.a;`
                                         fieldAccessConstValue.put(RFAccess,
-                                                meetValue(fieldAccessConstValue.get(RFAccess), nLVal));
+                                                meetValue(fieldAccessConstValue.get(RFAccess), eRVal));
                                         // Add the statement to workList
                                         workList.add(loadField);
                                     }
@@ -263,10 +263,11 @@ public class ConstantPropagation extends
                     // If the static field value changed, update it
                     if (!Objects.equals(objFieldConstValue.put(FAPair, nLVal), nLVal)) {
                         // Propagate them to corresponding LoadFields
+                        staticFieldStore2LoadMap.computeIfAbsent(LSFAccess.getFieldRef(), (key) -> new HashSet<>());
                         for (LoadField loadField: staticFieldStore2LoadMap.get(LSFAccess.getFieldRef())) {
                             // Update the RHS Value of `z = x.a;`
                             objFieldConstValue.computeIfAbsent(FAPair, (key) -> Value.getUndef());
-                            Value nRVal = meetValue(objFieldConstValue.get(FAPair), nLVal);
+                            Value nRVal = meetValue(objFieldConstValue.get(FAPair), eRVal);
                             objFieldConstValue.put(FAPair, nRVal);
                             // Add the statement to workList
                             workList.add(loadField);
@@ -291,8 +292,9 @@ public class ConstantPropagation extends
                             if (arrayIndexVal.isConstant()) {
                                 SimpleImmutableEntry<Obj, Value> LAAPairStar = AA2Pair(storeObj, Value.getUndef());
                                 objElemConstValue.computeIfAbsent(LAAPairStar, (key) -> Value.getUndef());
-                                objElemConstValue.put(LAAPair, meetValue(objElemConstValue.get(LAAPair), eRVal));
+                                objElemConstValue.put(LAAPairStar, meetValue(objElemConstValue.get(LAAPairStar), eRVal));
                             }
+                            rPointsToSet.computeIfAbsent(storeObj, (key) -> new HashSet<Var>());
                             for (Var objAssocVar: rPointsToSet.get(storeObj)) {
                                 for (LoadArray loadArray: objAssocVar.getLoadArrays()) {
                                     loadArrayPropagationQueueMap.computeIfAbsent(loadArray, (key) -> new HashSet<>());
@@ -347,17 +349,6 @@ public class ConstantPropagation extends
         if (arrayIndexVal1.isNAC() || arrayIndexVal2.isNAC())
             return true;
         throw new AssertionError("Path shouldn't be reached");
-    }
-
-    public void propagateArrayAlias(Obj storeObj, ArrayAccess RAAccess) {
-        for (Map.Entry<SimpleImmutableEntry<Obj, Value>, Value> entry: objElemConstValue.entrySet()) {
-            if (!Objects.equals(entry.getKey().getKey(), storeObj)) continue;
-            Value arrayIndexVal = entry.getKey().getValue(), arrayElemVal = entry.getValue();
-            arrayAccessConstValue.computeIfAbsent(RAAccess, (key) -> new HashMap<>());
-            Map<Value, Value> RAAccessMap = arrayAccessConstValue.get(RAAccess);
-            RAAccessMap.computeIfAbsent(arrayIndexVal, (key) -> Value.getUndef());
-            RAAccessMap.put(arrayIndexVal, meetValue(RAAccessMap.get(arrayIndexVal), arrayElemVal));
-        }
     }
 
     /**
@@ -470,39 +461,8 @@ public class ConstantPropagation extends
             objFieldConstValue.computeIfAbsent(FAPair, (key) -> Value.getUndef());
             return objFieldConstValue.get(FAPair);
         }
-        else if (exp instanceof ArrayAccess RAAccess) {
+        else if (exp instanceof ArrayAccess RAAccess)
             throw new AssertionError("Path shouldn't be reached");
-            /*
-            Var arrayVar = RAAccess.getBase(), arrayIndexVar = RAAccess.getIndex();
-            Value arrayIndexVal = evaluate(arrayIndexVar, in);
-            if (arrayIndexVal.isUndef())
-                return Value.getUndef();
-            else if (arrayIndexVal.isNAC()) {
-                arrayAccessConstValue.computeIfAbsent(RAAccess, (key) -> new HashMap<>());
-                Map<Value, Value> RAAccessMap = arrayAccessConstValue.get(RAAccess);
-                RAAccessMap.computeIfAbsent(Value.getUndef(), (key) -> Value.getUndef());
-                RAAccessMap.computeIfAbsent(Value.getNAC(), (key) -> Value.getUndef());
-                return meetValue(
-                        RAAccessMap.get(Value.getUndef()),
-                        RAAccessMap.get(Value.getNAC())
-                );
-            }
-            else if (arrayIndexVal.isConstant()) {
-                arrayAccessConstValue.computeIfAbsent(RAAccess, (key) -> new HashMap<>());
-                Map<Value, Value> RAAccessMap = arrayAccessConstValue.get(RAAccess);
-                RAAccessMap.computeIfAbsent(arrayIndexVal, (key) -> Value.getUndef());
-                RAAccessMap.computeIfAbsent(Value.getNAC(), (key) -> Value.getUndef());
-                return meetValue(
-                        RAAccessMap.get(arrayIndexVal),
-                        RAAccessMap.get(Value.getNAC())
-                );
-            }
-            else {
-                throw new AssertionError("Path shouldn't be reached");
-            }
-            */
-
-        }
         // Return NAC according to requirements.
         else
             return Value.getNAC();
