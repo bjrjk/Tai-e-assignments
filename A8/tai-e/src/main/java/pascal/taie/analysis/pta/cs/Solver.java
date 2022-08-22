@@ -49,6 +49,7 @@ import pascal.taie.analysis.pta.plugin.taint.TaintAnalysiss;
 import pascal.taie.analysis.pta.pts.PointsToSet;
 import pascal.taie.analysis.pta.pts.PointsToSetFactory;
 import pascal.taie.config.AnalysisOptions;
+import pascal.taie.ir.exp.InvokeDynamic;
 import pascal.taie.ir.exp.InvokeExp;
 import pascal.taie.ir.exp.Var;
 import pascal.taie.ir.stmt.*;
@@ -56,7 +57,7 @@ import pascal.taie.language.classes.JField;
 import pascal.taie.language.classes.JMethod;
 import pascal.taie.language.type.Type;
 
-import java.util.List;
+import java.util.*;
 
 public class Solver {
 
@@ -70,7 +71,7 @@ public class Solver {
 
     private CSManager csManager;
 
-    private CSCallGraph callGraph;
+    public CSCallGraph callGraph;
 
     private PointerFlowGraph pointerFlowGraph;
 
@@ -80,11 +81,16 @@ public class Solver {
 
     private PointerAnalysisResult result;
 
+    private final Map<CSVar, Set<Invoke>> argInvokeMap;
+    private final Map<Invoke, Set<CSVar>> invokeBaseObjMap;
+
     Solver(AnalysisOptions options, HeapModel heapModel,
            ContextSelector contextSelector) {
         this.options = options;
         this.heapModel = heapModel;
         this.contextSelector = contextSelector;
+        this.argInvokeMap = new HashMap<>();
+        this.invokeBaseObjMap = new HashMap<>();
     }
 
     public AnalysisOptions getOptions() {
@@ -167,8 +173,16 @@ public class Solver {
         }
 
         public Void visit(Invoke stmt) {
+            // Initialize argument-invoke for Taint Analysis
+            for (Var var: stmt.getInvokeExp().getArgs()) {
+                CSVar csVar = csManager.getCSVar(context, var);
+                argInvokeMap.computeIfAbsent(csVar, (k) -> new HashSet<>());
+                Set<Invoke> argInvokeSet = argInvokeMap.get(csVar);
+                argInvokeSet.add(stmt);
+            }
+            // Process Call
             if (stmt.isStatic())
-                processSingleCall(context, stmt, null);
+                processSingleCall(context, stmt, null, null);
             return null;
         }
         public Void visit(LoadField stmt) {
@@ -253,6 +267,18 @@ public class Solver {
                     // The call have to be dynamic here because obj is not null
                     processCall(varPtr, obj);
                 }
+                // Taint transfer process for arg-to-result
+                argInvokeMap.computeIfAbsent(varPtr, (k) -> new HashSet<>());
+                for (Invoke argInvoke: argInvokeMap.get(varPtr)) {
+                    Var resultVar = argInvoke.getLValue();
+                    CSVar csResultVar = resultVar != null ? csManager.getCSVar(varContext, resultVar) : null;
+                    invokeBaseObjMap.computeIfAbsent(argInvoke, (k) -> new HashSet<>());
+                    for (CSVar csRecvVar: invokeBaseObjMap.get(argInvoke)) {
+                        if (Objects.equals(varContext, csRecvVar.getContext()) && (csResultVar == null ||
+                                Objects.equals(csRecvVar.getContext(), csResultVar.getContext())))
+                            taintAnalysis.processTransfer(varContext, csRecvVar, csResultVar, argInvoke);
+                    }
+                }
             }
         }
     }
@@ -293,11 +319,13 @@ public class Solver {
         if (recv == null) // Only process dynamic calls
             return;
         for (Invoke invoke: recv.getVar().getInvokes()) {
-            processSingleCall(recv.getContext(), invoke, recvObj);
+            invokeBaseObjMap.computeIfAbsent(invoke, (k) -> new HashSet<>());
+            invokeBaseObjMap.get(invoke).add(recv);
+            processSingleCall(recv.getContext(), invoke, recvObj, recv);
         }
     }
 
-    private void processSingleCall(Context invokeContext, Invoke invoke, CSObj recv) {
+    private void processSingleCall(Context invokeContext, Invoke invoke, CSObj recv, CSVar recvVar) {
         JMethod method = resolveCallee(recv, invoke);
         CSCallSite csCallSite = csManager.getCSCallSite(invokeContext, invoke);
         Context targetContext = contextSelector.selectContext(csCallSite, recv, method);
@@ -307,7 +335,7 @@ public class Solver {
                     csManager.getCSVar(targetContext, method.getIR().getThis()),
                     PointsToSetFactory.make(recv)
             );
-        // If the edge exists in CG, add it and do the following:
+        // If the edge doesn't exist in CG, add it and do the following:
         if (callGraph.addEdge(new Edge<CSCallSite, CSMethod>(CallGraphs.getCallKind(invoke), csCallSite, csMethod))) {
             addReachable(csMethod);
             List<Var> params = method.getIR().getParams();
@@ -328,6 +356,25 @@ public class Solver {
                     );
             }
         }
+        // Taint source process
+        Set<CSObj> csObjSet = taintAnalysis.processSource(invoke);
+        Var resultVar = invoke.getLValue();
+        CSVar csResultVar = resultVar != null ? csManager.getCSVar(invokeContext, resultVar): null;
+        if (resultVar != null) {
+            for (CSObj taintObj: csObjSet) {
+                workList.addEntry(
+                        csResultVar,
+                        PointsToSetFactory.make(taintObj)
+                );
+            }
+        }
+        // Taint transfer process
+        taintAnalysis.processTransfer(invokeContext, recvVar, csResultVar, invoke);
+    }
+
+    public void workListAddEntry(Pointer ptr, CSObj csObj) {
+        if (ptr != null && csObj != null)
+            workList.addEntry(ptr, PointsToSetFactory.make(csObj));
     }
 
     /**
