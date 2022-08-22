@@ -1,6 +1,6 @@
 - id: cspta
   options:
-    cs: ci
+    cs: 1-obj
     merge-string-constants: false
     merge-string-objects: false
     merge-string-builders: false

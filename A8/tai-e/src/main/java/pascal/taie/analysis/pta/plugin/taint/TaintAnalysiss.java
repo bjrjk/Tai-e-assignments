@@ -75,13 +75,16 @@ public class TaintAnalysiss {
         return csObjSet;
     }
 
-    public void processTransfer(Context invokeContext, CSVar csRecvVar, CSVar csResultVar, Invoke invoke) {
+    public void processTransfer(Context invokeContext, Var recvVar, Var resultVar, Invoke invoke) {
+        CSVar csRecvVar = null, csResultVar = null;
+        if (recvVar != null) csRecvVar = csManager.getCSVar(invokeContext, recvVar);
+        if (resultVar != null) csResultVar = csManager.getCSVar(invokeContext, resultVar);
         for (TaintTransfer transfer: config.getTransfers()) {
             // Check whether method equals
             if (Objects.equals(transfer.method(), invoke.getMethodRef().resolve())) {
                 // Base to result
                 if (transfer.from() == -1 && transfer.to() == -2) {
-                    if (csRecvVar != null) { // Dynamic Invoke
+                    if (csRecvVar != null && csResultVar != null) { // Dynamic Invoke
                         for (CSObj csObj: csRecvVar.getPointsToSet().getObjects()) {
                             Obj obj = csObj.getObject();
                             if (manager.isTaint(obj)) {
@@ -109,14 +112,16 @@ public class TaintAnalysiss {
                 }
                 // Arg to result
                 else if (transfer.from() >= 0 && transfer.to() == -2) {
-                    CSVar csArgIVar = csManager.getCSVar(invokeContext,
-                            invoke.getInvokeExp().getArg(transfer.from()));
-                    for (CSObj csObj: csArgIVar.getPointsToSet().getObjects()) {
-                        Obj obj = csObj.getObject();
-                        if (manager.isTaint(obj)) {
-                            CSObj newTaintObj = csManager.getCSObj(emptyContext,
-                                    manager.makeTaint(manager.getSourceCall(obj), transfer.type()));
-                            solver.workListAddEntry(csResultVar, newTaintObj);
+                    if (csResultVar != null) {
+                        CSVar csArgIVar = csManager.getCSVar(invokeContext,
+                                invoke.getInvokeExp().getArg(transfer.from()));
+                        for (CSObj csObj: csArgIVar.getPointsToSet().getObjects()) {
+                            Obj obj = csObj.getObject();
+                            if (manager.isTaint(obj)) {
+                                CSObj newTaintObj = csManager.getCSObj(emptyContext,
+                                        manager.makeTaint(manager.getSourceCall(obj), transfer.type()));
+                                solver.workListAddEntry(csResultVar, newTaintObj);
+                            }
                         }
                     }
                 }

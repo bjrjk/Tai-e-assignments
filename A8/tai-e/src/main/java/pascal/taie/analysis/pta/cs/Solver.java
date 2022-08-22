@@ -81,8 +81,8 @@ public class Solver {
 
     private PointerAnalysisResult result;
 
-    private final Map<CSVar, Set<Invoke>> argInvokeMap;
-    private final Map<Invoke, Set<CSVar>> invokeBaseObjMap;
+    private final Map<Var, Set<Invoke>> argInvokeMap;
+    private final Map<Invoke, Set<Var>> invokeBaseObjMap;
 
     Solver(AnalysisOptions options, HeapModel heapModel,
            ContextSelector contextSelector) {
@@ -175,9 +175,8 @@ public class Solver {
         public Void visit(Invoke stmt) {
             // Initialize argument-invoke for Taint Analysis
             for (Var var: stmt.getInvokeExp().getArgs()) {
-                CSVar csVar = csManager.getCSVar(context, var);
-                argInvokeMap.computeIfAbsent(csVar, (k) -> new HashSet<>());
-                Set<Invoke> argInvokeSet = argInvokeMap.get(csVar);
+                argInvokeMap.computeIfAbsent(var, (k) -> new HashSet<>());
+                Set<Invoke> argInvokeSet = argInvokeMap.get(var);
                 argInvokeSet.add(stmt);
             }
             // Process Call
@@ -268,16 +267,14 @@ public class Solver {
                     processCall(varPtr, obj);
                 }
                 // Taint transfer process for arg-to-result
-                argInvokeMap.computeIfAbsent(varPtr, (k) -> new HashSet<>());
-                for (Invoke argInvoke: argInvokeMap.get(varPtr)) {
+                argInvokeMap.computeIfAbsent(var, (k) -> new HashSet<>());
+                for (Invoke argInvoke: argInvokeMap.get(var)) {
                     Var resultVar = argInvoke.getLValue();
-                    CSVar csResultVar = resultVar != null ? csManager.getCSVar(varContext, resultVar) : null;
                     invokeBaseObjMap.computeIfAbsent(argInvoke, (k) -> new HashSet<>());
-                    for (CSVar csRecvVar: invokeBaseObjMap.get(argInvoke)) {
-                        if (Objects.equals(varContext, csRecvVar.getContext()) && (csResultVar == null ||
-                                Objects.equals(csRecvVar.getContext(), csResultVar.getContext())))
-                            taintAnalysis.processTransfer(varContext, csRecvVar, csResultVar, argInvoke);
+                    for (Var recvVar: invokeBaseObjMap.get(argInvoke)) {
+                        taintAnalysis.processTransfer(varContext, recvVar, resultVar, argInvoke);
                     }
+                    taintAnalysis.processTransfer(varContext, null, resultVar, argInvoke);
                 }
             }
         }
@@ -320,7 +317,7 @@ public class Solver {
             return;
         for (Invoke invoke: recv.getVar().getInvokes()) {
             invokeBaseObjMap.computeIfAbsent(invoke, (k) -> new HashSet<>());
-            invokeBaseObjMap.get(invoke).add(recv);
+            invokeBaseObjMap.get(invoke).add(recv.getVar());
             processSingleCall(recv.getContext(), invoke, recvObj, recv);
         }
     }
@@ -328,7 +325,9 @@ public class Solver {
     private void processSingleCall(Context invokeContext, Invoke invoke, CSObj recv, CSVar recvVar) {
         JMethod method = resolveCallee(recv, invoke);
         CSCallSite csCallSite = csManager.getCSCallSite(invokeContext, invoke);
-        Context targetContext = contextSelector.selectContext(csCallSite, recv, method);
+        Context targetContext = recv != null ?
+                contextSelector.selectContext(csCallSite, recv, method) :
+                contextSelector.selectContext(csCallSite, method);
         CSMethod csMethod = csManager.getCSMethod(targetContext, method);
         if (recv != null)
             workList.addEntry(
@@ -359,17 +358,16 @@ public class Solver {
         // Taint source process
         Set<CSObj> csObjSet = taintAnalysis.processSource(invoke);
         Var resultVar = invoke.getLValue();
-        CSVar csResultVar = resultVar != null ? csManager.getCSVar(invokeContext, resultVar): null;
         if (resultVar != null) {
             for (CSObj taintObj: csObjSet) {
                 workList.addEntry(
-                        csResultVar,
+                        csManager.getCSVar(invokeContext, resultVar),
                         PointsToSetFactory.make(taintObj)
                 );
             }
         }
         // Taint transfer process
-        taintAnalysis.processTransfer(invokeContext, recvVar, csResultVar, invoke);
+        taintAnalysis.processTransfer(invokeContext, recvVar != null ? recvVar.getVar() : null, resultVar, invoke);
     }
 
     public void workListAddEntry(Pointer ptr, CSObj csObj) {
